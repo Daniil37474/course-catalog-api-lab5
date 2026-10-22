@@ -33,7 +33,7 @@ class CatalogTests(unittest.TestCase):
             "backend-fastapi", "databases-postgresql", "api-design",
         ])
         for course in self.client.get("/courses").json():
-            self.assertEqual(set(course), {"id", "title", "description", "credits", "is_elective", "likes"})
+            self.assertEqual(set(course), {"id", "title", "description", "credits", "isElective", "likes"})
 
     def test_elective_filter(self):
         self.assertEqual(self.ids("/courses?is_elective=true"), ["ai-integration", "api-design"])
@@ -68,7 +68,7 @@ class CatalogTests(unittest.TestCase):
     def test_single_course(self):
         response = self.client.get("/courses/web-security")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), find_course("web-security").model_dump())
+        self.assertEqual(response.json(), find_course("web-security").model_dump(by_alias=True))
 
     def test_missing_course(self):
         response = self.client.get("/courses/nope")
@@ -125,11 +125,11 @@ class CatalogTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 200)
         schema = self.client.get("/openapi.json").json()
-        self.assertEqual(set(schema["paths"]), {"/", "/courses", "/courses/{course_id}"})
-        self.assertTrue(all(set(path) == {"get"} for path in schema["paths"].values()))
+        self.assertEqual(set(schema["paths"]), {"/", "/courses", "/courses/{course_id}", "/courses/{course_id}/like", "/enrollments"})
+        self.assertEqual(sum(len(path) for path in schema["paths"].values()), 6)
         course = schema["components"]["schemas"]["Course"]
         self.assertEqual(set(course["required"]), {"id", "title", "description", "credits"})
-        self.assertFalse(course["properties"]["is_elective"]["default"])
+        self.assertFalse(course["properties"]["isElective"]["default"])
         self.assertEqual(course["properties"]["likes"]["default"], 0)
         params = {p["name"]: p["schema"] for p in schema["paths"]["/courses"]["get"]["parameters"]}
         self.assertEqual(set(params), {"page", "page_size", "is_elective", "sort", "q"})
