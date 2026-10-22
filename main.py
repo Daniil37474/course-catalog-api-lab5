@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends, FastAPI, HTTPException, Query
 
 from data import find_course, get_all_courses
-from models import Course
+from models import Course, Enrollment, EnrollmentIn
 
 app = FastAPI(title="Course Catalog API")
 
@@ -54,3 +54,33 @@ def get_course(course_id: str) -> Course:
     if course is None:
         raise HTTPException(status_code=404, detail="Course not found")
     return course
+
+
+ENROLLMENTS: list[Enrollment] = []
+
+
+@app.post("/courses/{course_id}/like", response_model=Course)
+def like_course(course_id: str) -> Course:
+    course = find_course(course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    course.likes += 1
+    return course
+
+
+@app.post("/enrollments", response_model=Enrollment, status_code=201)
+def create_enrollment(data: EnrollmentIn) -> Enrollment:
+    if find_course(data.course_id) is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    enrollment = Enrollment(
+        id=len(ENROLLMENTS) + 1,
+        course_id=data.course_id,
+        student_name=data.student_name,
+    )
+    ENROLLMENTS.append(enrollment)
+    return enrollment
+
+
+@app.get("/enrollments", response_model=list[Enrollment])
+def list_enrollments() -> list[Enrollment]:
+    return ENROLLMENTS

@@ -17,3 +17,12 @@ class Course(CamelModel):
     credits: int
     is_elective: bool = False
     likes: int = 0
+
+
+class EnrollmentIn(CamelModel):
+    course_id: str
+    student_name: str = Field(min_length=2)
+
+
+class Enrollment(EnrollmentIn):
+    id: int
