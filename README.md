@@ -1,10 +1,10 @@
 # Course Catalog API
 
-Backend лабораторных работ 4–5 на FastAPI. Возвращает шесть курсов, фильтрует и сортирует их, принимает лайки и записи на курс. Frontend: https://github.com/Gisg22/course-catalog.
+FastAPI backend for Labs 4-5. It returns six courses, supports filtering and sorting, and handles likes and course enrollment. Frontend: https://github.com/Daniil37474/course-catalog-lab5.
 
-## Запуск
+## Setup
 
-Python 3.10 или новее. Команды из корня проекта:
+Requires Python 3.10 or newer. Run from the project root:
 
 ```powershell
 python -m venv .venv
@@ -12,55 +12,63 @@ python -m venv .venv
 .\.venv\Scripts\fastapi.exe dev main.py --port 8000
 ```
 
-На macOS/Linux: `python3 -m venv .venv`, `source .venv/bin/activate`, `pip install -r requirements.txt`, `fastapi dev main.py --port 8000`.
+On macOS/Linux: `python3 -m venv .venv`, `source .venv/bin/activate`, `pip install -r requirements.txt`, `fastapi dev main.py --port 8000`.
 
-API: http://localhost:8000. Swagger UI: http://localhost:8000/docs. Также доступны `/redoc` и `/openapi.json`. Frontend запускается по адресу **http://localhost:3000**.
+API: http://localhost:8000. Swagger UI: http://localhost:8000/docs. `/redoc` and `/openapi.json` are also available. Run the frontend at **http://localhost:3000**.
 
-## Маршруты и контракт
+## Routes and data contract
 
-| Метод и путь | Результат |
+| Method and path | Result |
 | --- | --- |
-| `GET /` | 200, сообщение о работе API |
-| `GET /courses` | Шесть курсов, по убыванию likes |
-| `GET /courses/{course_id}` | 200, курс; неизвестный id — 404 |
-| `POST /courses/{course_id}/like` | 200, курс с увеличенным likes; неизвестный id — 404 |
-| `POST /enrollments` | 201, запись с новым id; неизвестный курс — 404; неверные поля — 422 |
-| `GET /enrollments` | 200, список записей |
+| `GET /` | 200, API status message |
+| `GET /courses` | Six courses, sorted by likes in descending order |
+| `GET /courses/{course_id}` | 200 with a course; 404 for an unknown ID |
+| `POST /courses/{course_id}/like` | 200 with the updated course; 404 for an unknown ID |
+| `POST /enrollments` | 201 with a new enrollment ID; 404 for an unknown course; 422 for invalid fields |
+| `GET /enrollments` | 200 with the enrollment list |
 
-Фильтры из лабораторной 4 сохранены: `is_elective`, `q`, `sort=popular|title`, `page` от 1, `page_size` от 1 до 100. Фильтрация и сортировка выполняются до пагинации. `?is_elective=true` возвращает два курса. Неизвестный параметр `?isElective=true` игнорируется и возвращает все шесть.
+Lab 4 query parameters are preserved: `is_elective`, `q`, `sort=popular|title`, `page` starting at 1, and `page_size` from 1 to 100. Filtering and sorting happen before pagination. `?is_elective=true` returns two courses. The unknown parameter `?isElective=true` is ignored and returns all six.
 
-Python-модели используют snake_case. Общая модель `CamelModel` задаёт `alias_generator=to_camel`, `validate_by_name=True`, `validate_by_alias=True`; JSON и OpenAPI используют camelCase. Требуется Pydantic 2.11+.
+Python models use snake_case. The shared `CamelModel` sets `alias_generator=to_camel`, `validate_by_name=True`, and `validate_by_alias=True`; JSON and OpenAPI use camelCase. Requires Pydantic 2.11+.
 
-Пример тела записи:
+Enrollment request body:
 
 ```json
 {"courseId":"web-security","studentName":"Aigerim"}
 ```
 
-Ответ 201:
+Response with status 201:
 
 ```json
 {"courseId":"web-security","studentName":"Aigerim","id":1}
 ```
 
-Имя короче двух символов отклоняется со статусом 422 и `loc: ["body", "studentName"]`. `Content-Type` запроса должен быть `application/json`.
+Names shorter than two characters are rejected with status 422 and `loc: ["body", "studentName"]`. The request must use `Content-Type: application/json`.
 
 ## CORS
 
-Разрешён только `http://localhost:3000`, без завершающего слеша. Разрешены все методы и заголовки. Для разрешённого origin API возвращает `Access-Control-Allow-Origin`; чужой origin не получает этот заголовок. Preflight для JSON POST отвечает 200 и `Access-Control-Max-Age: 600`.
+Only `http://localhost:3000` is allowed, without a trailing slash. All methods and headers are allowed. The API returns `Access-Control-Allow-Origin` for the allowed origin and omits it for other origins. JSON POST preflight returns 200 and `Access-Control-Max-Age: 600`.
 
 ```powershell
 curl.exe -i -X OPTIONS http://localhost:8000/enrollments -H "Origin: http://localhost:3000" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: content-type"
 ```
 
-CORS не запрещает обработку простого запроса, а ограничивает доступ браузерного JavaScript к ответу. Server Components обращаются к API напрямую, без браузерной проверки CORS.
+CORS restricts browser JavaScript from reading a response; it does not prevent the server from processing a simple request. Server Components call the API directly, without browser CORS checks.
 
-## Тесты
+## Tests
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Проверяются исходные маршруты, поиск, фильтрация, сортировка, пагинация, модели, OpenAPI, CORS, preflight, лайки, запись, статусы 200/201/404/422 и оба варианта имён полей. Изменения данных в тестах восстанавливаются после каждого сценария.
+Tests cover the original routes, search, filtering, sorting, pagination, models, OpenAPI, CORS, preflight, likes, enrollment, status codes 200/201/404/422, and both field naming conventions. Data changes are restored after each scenario.
 
-Данные находятся в памяти. Перезапуск сервера сбрасывает лайки, записи и нумерацию. Это учебная реализация для одного процесса; постоянное хранение и авторизация не подключены.
+Data is stored in memory. Restarting the server resets likes, enrollments, and enrollment numbering. This is a single-process educational implementation without persistent storage or authentication.
+
+## Lab 5 changes
+
+- Allowed the `http://localhost:3000` origin so the browser frontend can read responses from the separate API.
+- Added `CamelModel` to match JSON field names to TypeScript while preserving Python names and existing query parameters.
+- `POST /courses/{course_id}/like` returns the updated course, for example `{"id":"web-security","title":"Web Security Essentials","description":"JWT/OAuth2, defending against XSS, CSRF, SQL injection.","credits":4,"isElective":false,"likes":22}`.
+- `POST /enrollments` returns 201 and `{"courseId":"web-security","studentName":"Aigerim","id":1}`.
+- `GET /enrollments` returns the created enrollments, for example `[{"courseId":"web-security","studentName":"Aigerim","id":1}]`.
