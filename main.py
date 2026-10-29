@@ -1,25 +1,21 @@
 from typing import Annotated, Literal
 
-from fastapi.middleware.cors import CORSMiddleware
-
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
 
-from data import find_course, get_all_courses
-from schemas import Course, Enrollment, EnrollmentIn
+from db import get_db
+from models import Course
+from schemas import CourseOut
 
 app = FastAPI(title="Course Catalog API")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"], allow_headers=["*"],
 )
-
-
-@app.get("/")
-def read_root() -> dict[str, str]:
-    return {"message": "Course Catalog API is running"}
+SessionDep = Annotated[Session, Depends(get_db)]
 
 
 def pagination(
@@ -29,58 +25,45 @@ def pagination(
     return {"offset": (page - 1) * page_size, "limit": page_size}
 
 
-@app.get("/courses", response_model=list[Course])
+@app.get("/")
+def read_root():
+    return {"message": "Course Catalog API is running"}
+
+
+@app.get("/courses", response_model=list[CourseOut])
 def list_courses(
+    db: SessionDep,
     p: Annotated[dict[str, int], Depends(pagination)],
     is_elective: bool | None = None,
     sort: Literal["popular", "title"] = "popular",
     q: str | None = None,
-) -> list[Course]:
-    courses = get_all_courses()
+):
+    stmt = select(Course)
     if is_elective is not None:
-        courses = [course for course in courses if course.is_elective == is_elective]
+        stmt = stmt.where(Course.is_elective == is_elective)
     if q is not None:
-        courses = [course for course in courses if q.casefold() in course.title.casefold()]
+        stmt = stmt.where(Course.title.icontains(q, autoescape=True))
     if sort == "title":
-        courses = sorted(courses, key=lambda course: course.title)
+        stmt = stmt.order_by(Course.title, Course.id)
     else:
-        courses = sorted(courses, key=lambda course: course.likes, reverse=True)
-    return courses[p["offset"] : p["offset"] + p["limit"]]
+        stmt = stmt.order_by(Course.likes.desc(), Course.id)
+    return db.scalars(stmt.limit(p["limit"]).offset(p["offset"])).all()
 
 
-@app.get("/courses/{course_id}", response_model=Course)
-def get_course(course_id: str) -> Course:
-    course = find_course(course_id)
+@app.get("/courses/{course_id}", response_model=CourseOut)
+def get_course(course_id: str, db: SessionDep):
+    course = db.get(Course, course_id)
     if course is None:
-        raise HTTPException(status_code=404, detail="Course not found")
+        raise HTTPException(404, "Course not found")
     return course
 
 
-ENROLLMENTS: list[Enrollment] = []
-
-
-@app.post("/courses/{course_id}/like", response_model=Course)
-def like_course(course_id: str) -> Course:
-    course = find_course(course_id)
+@app.post("/courses/{course_id}/like", response_model=CourseOut)
+def like_course(course_id: str, db: SessionDep):
+    stmt = (update(Course).where(Course.id == course_id)
+            .values(likes=Course.likes + 1).returning(Course))
+    course = db.scalars(stmt).one_or_none()
     if course is None:
-        raise HTTPException(status_code=404, detail="Course not found")
-    course.likes += 1
+        raise HTTPException(404, "Course not found")
+    db.commit()
     return course
-
-
-@app.post("/enrollments", response_model=Enrollment, status_code=201)
-def create_enrollment(data: EnrollmentIn) -> Enrollment:
-    if find_course(data.course_id) is None:
-        raise HTTPException(status_code=404, detail="Course not found")
-    enrollment = Enrollment(
-        id=len(ENROLLMENTS) + 1,
-        course_id=data.course_id,
-        student_name=data.student_name,
-    )
-    ENROLLMENTS.append(enrollment)
-    return enrollment
-
-
-@app.get("/enrollments", response_model=list[Enrollment])
-def list_enrollments() -> list[Enrollment]:
-    return ENROLLMENTS
