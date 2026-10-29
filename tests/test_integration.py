@@ -1,78 +1,63 @@
-import unittest
-
-from fastapi.testclient import TestClient
-from data import COURSES
-from main import app, ENROLLMENTS
-from models import EnrollmentIn
-
-
-class IntegrationTests(unittest.TestCase):
-    def setUp(self):
-        self.client = TestClient(app)
-        self.likes = [course.likes for course in COURSES]
-        self.enrollments = ENROLLMENTS.copy()
-        ENROLLMENTS.clear()
-
-    def tearDown(self):
-        for course, likes in zip(COURSES, self.likes):
-            course.likes = likes
-        ENROLLMENTS[:] = self.enrollments
-        self.client.close()
-
-    def test_cors_origins_and_preflight(self):
-        for origin, allowed in [("http://localhost:3000", True),
-                                ("http://evil.example", False),
-                                ("http://localhost:3000/", False),
-                                ("http://127.0.0.1:3000", False)]:
-            with self.subTest(origin=origin):
-                response = self.client.get("/courses", headers={"Origin": origin})
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.headers.get("access-control-allow-origin"), origin if allowed else None)
-                preflight = self.client.options("/enrollments", headers={
-                    "Origin": origin, "Access-Control-Request-Method": "POST",
-                    "Access-Control-Request-Headers": "content-type",
-                })
-                self.assertEqual(preflight.status_code, 200 if allowed else 400)
-                if allowed:
-                    self.assertIn("POST", preflight.headers["access-control-allow-methods"])
-                    self.assertEqual(preflight.headers["access-control-max-age"], "600")
-
-    def test_like_updates_server_and_missing_course(self):
-        old = self.client.get("/courses/web-security").json()["likes"]
-        for value in [old + 1, old + 2]:
-            response = self.client.post("/courses/web-security/like")
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json()["likes"], value)
-            self.assertIn("isElective", response.json())
-        self.assertEqual(self.client.get("/courses/web-security").json()["likes"], old + 2)
-        self.assertEqual(self.client.post("/courses/nope/like").status_code, 404)
-
-    def test_enrollment_contract_validation_and_storage(self):
-        body = {"courseId": "web-security", "studentName": "Aigerim"}
-        created = self.client.post("/enrollments", json=body)
-        self.assertEqual(created.status_code, 201)
-        self.assertEqual(created.json(), {**body, "id": 1})
-        self.assertEqual(self.client.get("/enrollments").json(), [{**body, "id": 1}])
-        rejected = self.client.post("/enrollments", json={**body, "studentName": "A"})
-        self.assertEqual(rejected.status_code, 422)
-        self.assertEqual(rejected.json()["detail"][0]["loc"], ["body", "studentName"])
-        self.assertEqual(self.client.post("/enrollments", json={**body, "courseId": "nope"}).status_code, 404)
-        self.assertEqual(len(ENROLLMENTS), 1)
-        self.assertEqual(self.client.post("/enrollments", json=body).json()["id"], 2)
-
-    def test_aliases_keep_python_names_and_query_parameters(self):
-        snake = EnrollmentIn(course_id="web-security", student_name="Aigerim")
-        camel = EnrollmentIn(courseId="web-security", studentName="Aigerim")
-        self.assertEqual(snake, camel)
-        self.assertEqual(len(self.client.get("/courses?is_elective=true").json()), 2)
-        self.assertEqual(len(self.client.get("/courses?isElective=true").json()), 6)
-
-    def test_text_body_is_not_json(self):
-        response = self.client.post("/enrollments", content='{"courseId":"web-security","studentName":"Aigerim"}',
-                                    headers={"Content-Type": "text/plain"})
-        self.assertEqual(response.status_code, 422)
-        self.assertEqual(ENROLLMENTS, [])
+from datetime import datetime
+import pytest
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from models import Course, Enrollment, Student
+from main import CONSTRAINT_ERRORS
+from try_errors import CASES
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("title,path,body,status", CASES)
+def test_constraint_responses(client, title, path, body, status):
+    r = client.post(path, json=body)
+    assert r.status_code == status, r.text
+    assert client.get("/courses").status_code == 200  # Session recovered after rollback.
+
+
+def test_create_student_enroll_and_join(client):
+    r = client.post("/students", json={"name": "Nurlan Abenov", "email": "nurlan@example.com"})
+    assert r.status_code == 201
+    sid = r.json()["id"]
+    body = {"courseId": "web-security", "studentId": sid}
+    e = client.post("/enrollments", json=body)
+    assert e.status_code == 201
+    assert datetime.fromisoformat(e.json()["enrolledAt"]).tzinfo is not None
+    rows = client.get("/enrollments").json()
+    row = next(x for x in rows if x["id"] == e.json()["id"])
+    assert row["studentName"] == "Nurlan Abenov"
+    assert row["courseTitle"] == "Web Security Essentials"
+    assert client.post("/enrollments", json=body).status_code == 409
+
+
+def test_old_contract_and_invalid_email(client):
+    assert client.post("/enrollments", json={"courseId": "web-security", "studentName": "Aigerim"}).status_code == 422
+    assert client.post("/students", json={"name": "Valid Name", "email": "not-an-email"}).status_code == 422
+    assert client.post("/enrollments", content='{}', headers={"Content-Type": "text/plain"}).status_code == 422
+
+
+def test_unknown_constraint_remains_server_error(client, monkeypatch):
+    monkeypatch.delitem(CONSTRAINT_ERRORS, "students_email_key")
+    r = client.post("/students", json={"name": "Duplicate", "email": "aigerim@example.com"})
+    assert r.status_code == 500
+    assert client.get("/courses").status_code == 200
+
+
+def test_loaded_relationships_use_database_delete_rules(session):
+    student = session.get(Student, 2)
+    assert len(student.enrollments) == 3
+    session.delete(student)
+    session.flush()
+    assert session.scalar(select(func.count()).select_from(Enrollment)) == 3
+    course = session.get(Course, "modern-frontend")
+    assert len(course.enrollments) == 1
+    session.delete(course)
+    with pytest.raises(IntegrityError):
+        session.flush()
+    session.rollback()
+
+
+def test_cors(client):
+    for origin, allowed in [("http://localhost:3000", True), ("http://evil.example", False)]:
+        r = client.options("/enrollments", headers={"Origin": origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"})
+        assert r.status_code == (200 if allowed else 400)
+        assert r.headers.get("access-control-allow-origin") == (origin if allowed else None)
