@@ -92,6 +92,24 @@ def list_enrollments(db: SessionDep):
     return db.execute(stmt).all()
 
 
+@app.get("/students/{student_id}", response_model=StudentOut)
+def get_student(student_id: int, db: SessionDep):
+    student = db.get(Student, student_id)
+    if student is None:
+        raise services.ServiceError("STUDENT_NOT_FOUND", "Student not found")
+    return student
+
+
+@app.get("/students/{student_id}/enrollments", response_model=list[EnrollmentDetail])
+def student_enrollments(student_id: int, db: SessionDep):
+    stmt = (select(Enrollment.id, Enrollment.course_id,
+                   Course.title.label("course_title"), Enrollment.student_id,
+                   Student.name.label("student_name"), Enrollment.enrolled_at)
+            .join(Enrollment.course).join(Enrollment.student)
+            .where(Enrollment.student_id == student_id).order_by(Enrollment.id))
+    return db.execute(stmt).all()
+
+
 @app.get("/stats/courses", response_model=list[CourseStats])
 def course_stats(db: SessionDep):
     enrolled = func.count(Enrollment.id).label("enrolled")
