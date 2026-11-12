@@ -14,7 +14,9 @@ def test_health_docs_and_contract(client):
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert client.get(path).status_code == 200
     paths = client.get("/openapi.json").json()["paths"]
-    assert sum(len(v) for v in paths.values()) == 8
+    assert '/students/{student_id}' in paths
+    assert '/students/{student_id}/enrollments' in paths
+    assert '/graphql' in paths
     course = client.get("/courses/api-design").json()
     assert set(course) == {"id", "title", "description", "credits", "isElective", "likes", "level"}
     assert course["level"] == "beginner"

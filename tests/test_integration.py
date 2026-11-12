@@ -3,7 +3,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from models import Course, Enrollment, Student
-from main import CONSTRAINT_ERRORS
+from services import CONSTRAINT_ERRORS
 from try_errors import CASES
 
 
