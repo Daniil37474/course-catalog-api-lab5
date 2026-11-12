@@ -1,265 +1,147 @@
-# Course Catalog API
+# course-catalog-api
 
-Лабораторная работа 7 — SQLAlchemy и Alembic. API каталога курсов хранит
-данные в PostgreSQL, а структуру базы изменяют две последовательные миграции.
-Это продолжение API лабораторной №5 в том же репозитории.
+Backend of the course catalog: FastAPI, SQLAlchemy 2.1, PostgreSQL, Alembic and GraphQL on Strawberry as a second entrance (Labs 4–8, "Advanced Web Technologies").
 
-## Запуск
+## How to run
 
-Требуются Python 3.11 или новее, PostgreSQL 16 или новее и `psql` в PATH.
-Проверено на Windows, Python 3.12.14, PostgreSQL 18.6, SQLAlchemy 2.1.6,
-Alembic 1.20.1, FastAPI 0.143.0 и psycopg 3.3.6.
-Все команды приложения выполняются из корня репозитория.
+You need Python 3.11 or newer and PostgreSQL 16 or newer.
 
-Один раз на пустом сервере откройте `psql -h localhost -U postgres -d postgres`
-и выполните:
+Once, as the `postgres` superuser, create the role and the database:
 
 ```sql
 CREATE ROLE catalog_app LOGIN PASSWORD 'change-me';
 CREATE DATABASE course_catalog OWNER catalog_app;
-\q
 ```
 
-Уже существующие роль и базу повторно создавать не нужно. Пароль `change-me`
-учебный; реальные пароли не публикуются. В PowerShell:
+Then, from the project folder:
 
-```powershell
+```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-$env:PGCLIENTENCODING = "UTF8"
+# On Windows: .venv\Scripts\Activate.ps1
+# On Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+alembic upgrade head
+psql -h localhost -U catalog_app -d course_catalog -v ON_ERROR_STOP=1 -f seed.sql
+fastapi dev main.py
 ```
 
-При необходимости исправьте адрес и порт в `.env`. Образец использует порт
-5432; локальная проверка выполнена на 55436. Переменная окружения DATABASE_URL
-имеет приоритет над `.env`; после временного переключения базы удалите её
-через `Remove-Item Env:DATABASE_URL`. Файл `.env` исключён из Git.
-Если активация окружения недоступна, запускайте Python и инструменты напрямую
-из `.venv/Scripts/`.
+REST docs: http://localhost:8000/docs. GraphiQL: http://localhost:8000/graphql.
+The password `change-me` is for training; real projects don't commit passwords.
 
-Для новой пустой базы:
+## What changed in the API
 
-```powershell
-python check_db.py
-python -m alembic upgrade head
-psql -X -h localhost -U catalog_app -d course_catalog -v ON_ERROR_STOP=1 -f seed.sql
-python check_models.py
-python -m alembic check
-python -m uvicorn main:app --reload
+- **Ошибки REST в формате Problem Details (RFC 9457):** все ожидаемые бизнес-ошибки (`EMAIL_TAKEN`, `ALREADY_ENROLLED`, `COURSE_NOT_FOUND`, `STUDENT_NOT_FOUND`) и стандартные ошибки фреймворка возвращаются с заголовком `Content-Type: application/problem+json` и структурированным телом (поля `type`, `title`, `status`, `detail`, `instance`). Бизнес-правила и ограничения вынесены из маршрутов в изолированный слой `services.py` (`ServiceError`), а их трансляция в HTTP-ответы выполняется через обработчики исключений в `problem.py`.
+- **Точка входа `/graphql` и GraphiQL:** подключен Strawberry GraphQL Router с маршрутом `/graphql`. При обращении через браузер открывается интерактивная среда GraphiQL со встроенной документацией схемы и автодополнением по `Ctrl+Space`. Сессия базы данных берется для каждого HTTP-запроса через фабрику контекста `Context(BaseContext)`, что исключает утечки сессий между запросами.
+- **Мутации и контракт `userErrors`:** мутации `enroll` и `likeCourse` следуют соглашению GraphQL: принимают структурированный аргумент `input` и возвращают типизированный ответ-конверт (payload) со списком `userErrors`. Ожидаемые нарушения бизнес-правил возвращаются со статусом 200 OK внутри `data.<mutation>.userErrors`. Непредвиденные системные сбои возвращаются в верхнеуровневом ключе `errors`.
+- **Счётчик SQL-запросов и заголовок `X-SQL-Queries`:** реализован измерительный middleware (`counter.py`), слушающий событие SQLAlchemy `before_cursor_execute` на движке `engine`. Количество обращений к базе данных подсчитывается в изолированном контексте `ContextVar` для каждого запроса и возвращается клиенту в заголовке `X-SQL-Queries`.
+- **Многоуровневая защита GraphQL:**
+  - `QueryDepthLimiter(max_depth=5)` блокирует запросы с чрезмерной вложенностью до их выполнения;
+  - `MaxAliasesLimiter(max_alias_count=10)` ограничивает количество псевдонимов в одном запросе;
+  - Функции `check_limit` и `parse_id` валидируют диапазоны аргументов в резолверах с понятными сообщениями `GraphQLError`;
+  - `MaskErrors` маскирует внутренние непредвиденные исключения, предотвращая утечку структуры базы и SQL-запросов клиенту (возвращает `Unexpected error.`);
+  - Интроспекция управляется переменной окружения `GRAPHQL_INTROSPECTION` (`config.py`).
+- **Новые REST-маршруты:** добавлены эндпоинты `GET /students/{id}` и `GET /students/{id}/enrollments`, возвращающие данные студента и список его записей на курсы.
+
+## Example queries
+
+The “My courses” query (in the GraphiQL Variables panel: `{"id": "2"}`):
+
+```graphql
+query MyCourses($id: ID!) {
+  student(id: $id) {
+    name
+    enrollments {
+      id
+      course {
+        title
+        credits
+        level
+      }
+    }
+  }
+}
 ```
 
-В команду psql добавьте `-p 55436`, если используете локальный учебный сервер
-на этом порту. При запросе пароля введите `change-me`. На Linux/macOS окружение
-активируется командой `source .venv/bin/activate`, а `.env` копируется через
-`cp .env.example .env`; остальные команды одинаковы.
+The `enroll` mutation and its answer on a repeated enrollment:
 
-Документация API: [Swagger](http://localhost:8000/docs),
-[ReDoc](http://localhost:8000/redoc). В другом терминале с активным окружением:
-
-```powershell
-python try_errors.py
+```graphql
+mutation Enroll($input: EnrollInput!) {
+  enroll(input: $input) {
+    enrollment {
+      id
+      enrolledAt
+      course {
+        title
+      }
+    }
+    userErrors {
+      code
+      message
+    }
+  }
+}
 ```
 
-Ожидаемый итог — `5 of 5 as expected`. Для другого адреса сервера:
-`python try_errors.py --base-url http://127.0.0.1:8007`.
-
-**seed.sql очищает учебные таблицы и сбрасывает счётчики ID.** Его можно
-повторять для восстановления 6 курсов, 3 студентов и 6 записей. Все действия
-в файле объединены в транзакцию. На рабочей базе с нужными данными этот файл
-запускать нельзя. Схема создаётся миграциями; вызова `create_all()` в API нет.
-
-### Если база уже создана в лабораторной №6
-
-Сначала убедитесь, что таблицы, типы, ключи, ограничения и индекс соответствуют
-миграции 0001. Затем выполните:
-
-```powershell
-python -m alembic stamp 0001
-python -m alembic upgrade head
-python -m alembic check
-python check_models.py
+Variables:
+```json
+{
+  "input": {
+    "courseId": "ai-integration",
+    "studentId": "3"
+  }
+}
 ```
 
-`stamp` только записывает номер версии, не создаёт таблицы и не проверяет их
-структуру. Здесь нужен именно `0001`: `stamp head` в готовом проекте означал бы
-0002 и ошибочно объявил бы отсутствующий столбец level уже существующим.
-В ходе работы 0001 сначала была проверена в отдельной пустой базе; затем
-схема лабораторной №6 получила отметку 0001 и успешно прошла `alembic check`.
-
-### Автоматические проверки
-
-Создайте отдельную тестовую базу от имени администратора:
-
-```sql
-CREATE DATABASE course_catalog_test OWNER catalog_app;
+Response with `userErrors`:
+```json
+{
+  "data": {
+    "enroll": {
+      "enrollment": null,
+      "userErrors": [
+        {
+          "code": "ALREADY_ENROLLED",
+          "message": "Student is already enrolled in this course"
+        }
+      ]
+    }
+  }
+}
 ```
 
-Затем:
+## REST vs GraphQL comparison
 
-```powershell
-python -m pip install -r requirements-dev.txt
-$env:TEST_DATABASE_URL = "postgresql+psycopg://catalog_app:change-me@localhost:5432/course_catalog_test"
-python -m pytest -q
-Remove-Item Env:TEST_DATABASE_URL
-```
+The “My courses” screen of student 2; numbers from `measure.py`, starting data.
 
-Тесты требуют имя базы с окончанием `_test`, применяют миграции и загружают
-учебные данные. Изменения каждого теста откатываются отдельной транзакцией.
-Основная база приложения для тестов не используется.
+| Criterion | REST | GraphQL | Source |
+|-----------|------|---------|--------|
+| Requests and rounds per screen | 5 requests, 2 rounds (round 1: student + enrollments; round 2: 3 courses) | 1 request, 1 round | `measure.py`, step 8 |
+| Bytes in the responses | 1146 bytes | 339 bytes | `measure.py`, step 8 |
+| SQL queries per screen | 5 SQL queries (1 student + 1 enrollments + 3 courses) | 3 SQL queries (DataLoader batching) | `measure.py`, `X-SQL-Queries` |
+| SQL growth with more students | Linear growth (N+1): each student and enrollment triggers individual queries | Constant: 3 SQL queries per query tree regardless of row count | `try_n_plus_1.py`, experiments 4–5 |
+| Error in the query text | HTTP 404 (route not found) / HTTP 422 (validation error) | HTTP 200, `data: null`, `errors` with location and `Did you mean...` hint | experiments 1 and 8 |
+| Expected rule error (repeated enrollment) | HTTP 409, `application/problem+json`, `type: .../already-enrolled` | HTTP 200, `userErrors[0].code = ALREADY_ENROLLED` in payload | steps 1 and 4 |
+| HTTP cache | Standard and native: caching per URL and GET method on browser/CDN level | Difficult: uniform POST to `/graphql`; requires client-side cache (Normalized Cache) | lecture section 14 |
+| Protection from “expensive” queries | Route-level limits (built-in pagination, per-endpoint rate limiters) | Schema-level extensions: depth limiter, alias limiter, query complexity, argument checks | experiments 6 and 7 |
 
-## Изменения в API
+**Conclusion.** REST оптимален для простых CRUD-сценариев и публичных коллекций (например, каталог всех курсов `/courses`), где критически важна простота кэширования на уровне CDN и стандартные коды ответов HTTP. GraphQL демонстрирует подавляющее преимущество на сложных пользовательских экранах (таких как личный кабинет «Мои курсы»): он сокращает число запросов с 5 до 1, исключает задержку последовательных сетевых раундов (1 раунд вместо 2), передает в 3.4 раза меньше байт (339 против 1146), а использование DataLoaders предотвращает проблему N+1, сводя нагрузку на БД к фиксированным 3 запросам.
 
-Курсы, студенты и записи теперь находятся в PostgreSQL. Лайки, новые студенты
-и регистрации сохраняются после перезапуска процесса API. На каждый запрос
-выдаётся своя Session; после обработки она закрывается, соединение возвращается
-в пул. Изменяющие маршруты выполняют COMMIT; ошибки вставки вызывают ROLLBACK.
+## Experiment log
 
-| Метод и маршрут | Назначение |
-|---|---|
-| GET / | Проверка работы API |
-| GET /courses | Фильтры is_elective, level, q; сортировка popular или title; page и page_size |
-| GET /courses/{course_id} | Один курс, 404 при отсутствии |
-| POST /courses/{course_id}/like | Атомарный UPDATE с likes + 1 и RETURNING |
-| POST /students | Создание студента по name и email, ответ 201 |
-| POST /enrollments | Запись существующего студента на курс, ответ 201 |
-| GET /enrollments | Записи с именем студента и названием курса через JOIN |
-| GET /stats/courses | Число записей каждого курса, включая нули |
+| # | Experiment | What I saw | Cause | How I fixed it |
+|---|------------|------------|-------|----------------|
+| 1 | a typo in a field name (`titel`), an argument name in `snake_case` (`is_elective`) | HTTP 200, `data: null`, в `errors`: `Cannot query field 'titel' on type 'Course'. Did you mean 'title', 'level', or 'likes'?` и `Unknown argument 'is_elective'... Did you mean 'isElective'?` | Движок GraphQL валидирует синтаксис и типы запроса по схеме до выполнения резолверов. Имена аргументов в схеме Strawberry автоматически приводятся к camelCase. | Исправил имя поля на `title`, а аргумент на `isElective`. |
+| 2 | `\| None` removed from the `course` query, a nonexistent course | HTTP 200, `data: null`, `errors`: `Cannot return null for non-nullable field Query.course.`. В запросе с псевдонимами `{ a: course(...) b: course("nope") }` результат поля `a` был уничтожен вместе с `b`. | Правило всплытия null (null propagation): возвращение null в поле, объявленном в схеме как обязательное (`!`), «поднимает» null к ближайшему nullable-родителю (в данном случае ко всему `data`). | Вернул аннотацию возвращаемого типа `CourseType \| None` в методе резолвера `course`. |
+| 3 | a mutation with the GET method | HTTP 400 Bad Request (plain text): `mutations are not allowed when using GET`. Число лайков в базе не изменилось (осталось 12). | Спецификация GraphQL и семантика HTTP запрещают мутации через безопасный метод GET, чтобы исключить случайное изменение данных при переходе по ссылке или предзагрузке. | Мутации отправляются исключительно методом POST с телом JSON. |
+| 4 | `more_students.sql`: 3 and 20 students, the SQL counter | До DataLoaders: 3 студента требовали 7 SQL-запросов, 20 студентов — 27 и 24 запроса. В GraphiQL задержка визуально не заметна, но нагрузка на БД выросла почти в 4 раза. | Проблема N+1: ленивая загрузка связанных сущностей ORM при обращении к атрибутам в цикле порождает отдельный SQL-запрос на каждый родительский объект (1 + N + M). | Подключил пакетную загрузку связей через DataLoaders (`batch_loader`), объединяющую выборки в `WHERE IN (...)`. |
+| 5 | a DataLoader batch function that doesn't sort rows by key | Запрос студентов вернул `WrongNumberOfResultsReturned: expected: 3, received: 6`. Запрос записей с `order_by(column.desc())` вернул данные без ошибок, но у 4 из 6 записей курсы перепутались. | DataLoader сопоставляет результаты по позиционному индексу в возвращаемом списке. Нарушение порядка или длины списка приводит либо к исключению, либо к незаметной подмене чужих данных. | Сгруппировал строки через `defaultdict(list)` по значению внешнего ключа и вернул список строго в порядке переданных ключей `keys`. |
+| 6 | six dangerous queries without protection and with it | Без защиты: цикл глубиной 6 и 12 псевдонимов выполнились (24 SQL-запроса на лайки); `limit -1` и 20-значный ID вывели клиенту SQL-текст, имена таблиц и параметров. С защитой: цикл и псевдонимы отклонены до выполнения (`exceeds maximum operation depth of 5`, `12 aliases found. Allowed: 10`); аргументы проверены (`limit must be between 1 and 100`, `Invalid ID: 'abc'`), а переполнение bigint замаскировано (`Unexpected error.`). | В GraphQL клиент сам формирует дерево запроса и может исчерпать ресурсы сервера. По умолчанию неотловленные исключения попадают в `errors` со всеми внутренними деталями. | Подключил расширения `QueryDepthLimiter`, `MaxAliasesLimiter`, валидаторы `check_limit` и `parse_id` в резолверах, а также расширение `MaskErrors`. |
+| 7 | introspection off, a typo in a field name | Запрос `{ __schema { queryType { name } } }` отклонен: `GraphQL introspection has been disabled`. Однако запрос с опечаткой `{ cours { title } }` по-прежнему вернул подсказку `Did you mean 'course' or 'courses'?`. | Отключение интроспекции блокирует системные поля `__schema` и `__type`, но валидатор запросов продолжает генерировать подсказки по именам полей схемы. Скрытие схемы не заменяет авторизацию. | Восстановил `GRAPHQL_INTROSPECTION=true` для работы GraphiQL, зафиксировав понимание, что безопасность данных обеспечивается правами доступа пользователей, а не секретностью схемы. |
+| 8 | client failures: a typo, no `errors` check, the API stopped | 1) Опечатка в поле: `GraphQLRequestError: Cannot query field 'titel'...`. 2) Без проверки `errors`: `TypeError: Cannot destructure property 'student'... as it is null`. 3) API остановлен: `TypeError: fetch failed`. | GraphQL возвращает HTTP 200 даже при ошибках в запросе. Без проверки ключа `errors` клиент падает на следствии (попытка прочитать свойства из `null`), скрывая первопричину с сервера. | В хелпере `gql` реализована обязательная проверка `if (body.errors?.length) throw new GraphQLRequestError(body.errors)`. |
 
-JSON использует camelCase. Вместо studentName в POST /enrollments требуется
-studentId. Пример: сначала `{"name":"Nurlan Abenov","email":"nurlan@example.com"}`
-в POST /students, затем `{"courseId":"web-security","studentId":4}` в POST
-/enrollments, где 4 заменяется фактическим id из первого ответа.
-Frontend лабораторной №5 не изменён; его прежняя форма с studentName получит 422.
-Проверять новый контракт следует через Swagger.
+## Decisions
 
-Ответ GET /enrollments включает courseTitle, studentName и enrolledAt с часовым
-поясом. Статистика использует `count(Enrollment.id)`: count(*) ошибочно считает
-одну строку LEFT JOIN даже у курса без записей.
-
-Поле level обязательно и не имеет серверного значения по умолчанию.
-Для существующих данных elective-курсам назначен beginner, остальным —
-intermediate. Фильтр `?level=beginner` возвращает ai-integration и api-design;
-`?level=advanced` на учебных данных возвращает пустой список. В рамках основной
-работы level хранится как text; отдельного CHECK на три значения нет.
-
-Поиск q из лабораторной №5 сохранён; `%` и `_` трактуются как обычные символы,
-а значения передаются параметрами. Сортировка дополняется id для устойчивой
-пагинации. page >= 1, размер страницы от 1 до 100.
-
-| Ограничение | Ответ |
-|---|---|
-| students_email_key | 409 — Student with this email already exists |
-| enrollments_course_id_student_id_key | 409 — Student is already enrolled in this course |
-| enrollments_course_id_fkey | 404 — Course not found |
-| enrollments_student_id_fkey | 404 — Student not found |
-
-Короткое имя и неправильный email отклоняет Pydantic с 422. Неизвестное
-нарушение БД повторно поднимается как ошибка сервера 500, а не маскируется
-под ошибку клиента. После IntegrityError сессия явно откатывается.
-
-## Миграции
-
-История: `<base> → 0001 → 0002 (head)`.
-0001 создаёт три таблицы, ограничения, identity-колонки и индекс student_id.
-0002 добавляет обязательный level в три шага, сохраняя существующие строки.
-
-| Команда | Действие |
-|---|---|
-| `alembic upgrade head` | Применить недостающие миграции |
-| `alembic downgrade -1` | Откатить последнюю миграцию; при откате 0002 значения level теряются |
-| `alembic current` | Показать версию базы |
-| `alembic history` | Показать цепочку миграций |
-| `alembic heads` | Показать конечные ревизии; в проекте одна — 0002 |
-| `alembic revision --autogenerate -m "text"` | Составить черновик по различиям моделей и базы |
-| `alembic check` | Проверить наличие автоматически определяемых различий |
-| `alembic upgrade 0001:0002 --sql` | Напечатать SQL второй миграции без выполнения |
-| `alembic stamp head` | Только отметить последнюю версию; допустимо, если схема уже точно ей соответствует |
-
-Команды также доступны через `python -m alembic`. Alembic берёт адрес из
-config.py, поэтому в alembic.ini нет пароля. env.py импортирует модели,
-передаёт Base.metadata и использует NullPool. Проверяются типы и серверные
-значения по умолчанию. Autogenerate всегда требует чтения результата:
-он не знает, как заполнить новые столбцы существующих строк.
-
-SQL второй миграции проверен до применения:
-
-```sql
-ALTER TABLE courses ADD COLUMN level TEXT;
-UPDATE courses SET level = CASE
-    WHEN is_elective THEN 'beginner' ELSE 'intermediate' END;
-ALTER TABLE courses ALTER COLUMN level SET NOT NULL;
-```
-
-Все три шага выполняются в одной транзакции. Downgrade удаляет level;
-повторный upgrade заполняет его по исходному правилу. Пользовательские изменения
-уровней таким циклом не восстанавливаются.
-
-## Журнал экспериментов
-
-Эксперименты выполнены 29 октября 2026 года на отдельном учебном сервере
-PostgreSQL 18.6. После каждого изменения исходный код и структура восстановлены.
-
-| № | Эксперимент | Наблюдение | Причина | Исправление |
-|---|---|---|---|---|
-| 1 | Изменён шаблон uq | В моделях: enrollments_course_id_unique, students_email_unique; в БД: enrollments_course_id_student_id_key, students_email_key | Шаблон использует один столбец и суффикс unique | Возвращён `%(table_name)s_%(column_0_N_name)s_key`; check_models снова выводит none дважды |
-| 2 | Убрано min_length, имя N | HTTP 500 Internal Server Error; строка не добавлена | CHECK students_name_check защищает данные, но не входит в словарь ожидаемых ошибок API | Возвращён Field(min_length=2); API отвечает 422 |
-| 3 | students_email_key заменено на students_email_uniq | Повтор email дал HTTP 500 вместо 409 | Реальное имя ограничения отсутствует в словаре | Исправлено имя; повторный запрос даёт 409 |
-| 4 | У title снят NOT NULL, затем тип заменён на varchar(100) | alembic check завершился ошибкой: modify_nullable, затем modify_type | Ручная правка БД расходится с моделями | Возвращены NOT NULL и text; check чистый |
-| 5 | Автоматическая 0002 добавляет TEXT NOT NULL к заполненной таблице | NotNullViolation: column "level" ... contains null values; версия осталась 0001 | Существующим строкам нечего записать в новый обязательный столбец | Добавление nullable → UPDATE → SET NOT NULL; upgrade проходит |
-| 6 | Закомментирован import models в env.py | Сгенерированная 0003_oops предлагает drop_table для всех трёх таблиц | Base.metadata пустая, Alembic считает таблицы лишними | Опасная миграция не применялась; файл удалён, импорт возвращён |
-| 7 | В Student добавлено phone без миграции | alembic check: New upgrade operations detected, add_column students.phone | Модель описывает отсутствующий столбец | Экспериментальное поле удалено; check снова чистый |
-| 8 | Созданы 0003 и 0004 от 0002 | heads показал две вершины; upgrade head: Multiple head revisions are present | История разветвилась, head неоднозначен | Создана merge-ревизия 0005 с двумя родителями; затем все три учебных файла удалены без применения, осталась одна head 0002 |
-
-Дополнительно неправильный пароль дал OperationalError с сообщением
-`password authentication failed for user "catalog_app"`; после восстановления
-адреса подключение успешно. SQL_ECHO показал BEGIN, запросы и ROLLBACK для
-чтения; постоянное журналирование параметров по умолчанию выключено.
-
-При попытке применить 0001 поверх существующих таблиц получена DuplicateTable:
-`relation "courses" already exists`; транзакция DDL откатилась. После проверки
-схемы применён stamp 0001. На пустой базе, напротив, успешно выполнен upgrade.
-
-Итоговая проверка включает запуск с нуля, повторный seed.sql, цикл
-upgrade → downgrade → upgrade, совпадение моделей и БД, один head и пять
-ожидаемых ответов try_errors.py. Автоматические тесты: **22 passed**. Проверены фильтры, страницы, сортировка,
-контракт JSON, ограничения, восстановление сессии после ошибки, CORS и
-каскадное удаление при загруженных связях.
-
-Реальный HTTP-сервер запущен, получил два лайка (11 → 13), нового студента и
-запись, затем был остановлен и запущен повторно. После перезапуска сохранились
-13 лайков, студент и запись. Дополнительно 10 параллельных запросов лайка
-увеличили счётчик с 13 до 23 без потери обновлений. Скрипт try_errors.py через
-HTTP подтвердил `5 of 5 as expected`. После проверки seed.sql восстановил
-6 / 3 / 6 строк и исходные лайки.
-
-## Принятые решения
-
-- SQLSTATE 23505 одинаков для разных нарушений уникальности, поэтому точный
-  ответ выбирается по имени ограничения. INSERT и COMMIT проверяют реальное
-  состояние БД; предварительный SELECT не защищает от конкурирующей вставки
-  между проверкой и сохранением.
-- Лайк увеличивается одной командой `UPDATE ... SET likes = likes + 1`.
-  Блокировка строки и вычисление на стороне БД сохраняют оба одновременных
-  изменения; схема «прочитать, прибавить в Python, записать» может потерять лайк.
-- Новое обязательное поле добавляется в три шага, потому что существующим
-  строкам сначала нужны значения. Решение beginner/intermediate относится
-  к данным и не может быть автоматически выведено из структуры модели.
-- У связей задано `passive_deletes="all"`: RESTRICT и CASCADE полностью
-  выполняет PostgreSQL даже для уже загруженной коллекции дочерних объектов.
-  ORM не пытается заменить обязательный внешний ключ на NULL.
-
-## Самопроверка миграции 0002
-
-| Критерий | Результат |
-|---|---|
-| Цель и шаги | Да: одно изменение — level; nullable, заполнение, NOT NULL |
-| Данные | Да: все шесть строк сохранены; два beginner и четыре intermediate |
-| Переименования и удаления | Да: upgrade ничего не удаляет и не переименовывает; downgrade удаляет только level |
-| Откат | Да: downgrade работает, но удаляет значения level; для рабочей базы необходим план восстановления пользовательских значений |
-| Проверка | Да: просмотрен SQL, выполнен цикл отката и повторного применения, alembic check чистый |
-| История | Да: одна head 0002; модель, схема ответа, фильтр, seed и миграция в одном коммите |
-| Приложение | Да: level возвращается в JSON и используется в фильтре; начальные данные обновлены; studentId заменяет studentName |
-
-Документация: [SQLAlchemy relationships](https://docs.sqlalchemy.org/en/21/orm/cascades.html),
-[Alembic autogenerate](https://alembic.sqlalchemy.org/en/latest/autogenerate.html).
+- **Правила и их ошибки сосредоточены в `services.py`, а REST и GraphQL транслируют коды ошибок независимо.** Бизнес-правила приложения (уникальность email, проверка дубликата записи, существование курса и студента) не зависят от протокола передачи данных. Если валидировать правила отдельно в REST-маршрутах и GraphQL-мутациях, логика неизбежно рассинхронизируется при развитии проекта. Слой `services.py` принимает сессию SQLAlchemy и аргументы, выполняет операции и при нарушении выбрасывает `ServiceError(code, message)`. Слой REST (`problem.py`) сопоставляет код с HTTP-статусом и типом RFC 9457, а GraphQL-мутации оборачивают его в `userErrors`.
+- **Экземпляры DataLoader создаются в `Context` на каждый запрос, а батч-функция сопоставляет строки по значению ключа.** DataLoader кэширует загруженные объекты по ключу в памяти. Если бы загрузчик был синглтоном на уровне приложения, данные одного пользователя (или результаты устаревших транзакций) отдавались бы другим пользователям в обход изоляции запросов. Батч-функция группирует строки через словарь `groups = defaultdict(list)` по значению ключа (`getattr(row, column.key)`), поскольку база данных не гарантирует совпадение порядка возвращаемых строк с порядком ключей в операторе `IN (...)`.
+- **Двухуровневая защита: явная валидация `check_limit` / `parse_id` и `MaskErrors` для остального.** Расширение `MaskErrors` скрывает любые непредвиденные исключения, заменяя их на текст `Unexpected error.`. Однако для клиента, допустившего понятную ошибку (например, отрицательный лимит или строковый ID), такое сообщение неинформативно и мешает отладке. Поэтому понятные пограничные случаи проверяются в коде резолверов с выбросом `GraphQLError` с конкретным текстом («limit must be between 1 and 100», «Invalid ID: 'abc'»), а `MaskErrors` отлавливает только непредвиденные аварии (ошибки БД, сбои типов), скрывая от клиента внутренности системы и SQL-код.
