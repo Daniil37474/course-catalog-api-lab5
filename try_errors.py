@@ -18,7 +18,12 @@ def main():
     with httpx.Client(base_url=args.base_url, timeout=10) as client:
         for title, path, body, expected in CASES:
             response = client.post(path, json=body)
-            ok = response.status_code == expected
+            suffixes = ["email-taken", "already-enrolled", "course-not-found", "student-not-found", "-"]
+            suffix = suffixes[[row[0] for row in CASES].index(title)]
+            content_type = response.headers.get("content-type", "").split(";")[0]
+            actual = response.json().get("type", "-").rsplit("/", 1)[-1]
+            expected_type = "application/json" if expected == 422 else "application/problem+json"
+            ok = (response.status_code == expected and content_type == expected_type and actual == suffix)
             failed += not ok
             print(f"{'ok' if ok else 'FAIL':4} {title:20} {response.status_code} {response.text[:80]}")
     print(f"{len(CASES) - failed} of {len(CASES)} as expected")
