@@ -8,6 +8,7 @@ import problem
 import services
 
 from db import get_db
+from graphql_api import graphql_app
 from models import Course, Enrollment, Student
 from schemas import (CourseOut, CourseStats, EnrollmentDetail, EnrollmentIn,
                      EnrollmentOut, StudentIn, StudentOut)
@@ -20,6 +21,7 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"],
 )
 SessionDep = Annotated[Session, Depends(get_db)]
+app.include_router(graphql_app, prefix="/graphql")
 
 def pagination(
     page: Annotated[int, Query(ge=1)] = 1,
