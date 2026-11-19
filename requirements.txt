@@ -5,3 +5,5 @@ psycopg[binary]>=3.3,<4
 alembic>=1.20,<2
 pydantic-settings>=2,<3
 strawberry-graphql[fastapi]>=0.338,<0.400
+PyJWT>=2.10,<3
+pwdlib[argon2]>=0.3,<0.4

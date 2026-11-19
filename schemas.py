@@ -49,3 +49,16 @@ class EnrollmentDetail(EnrollmentOut):
 class CourseStats(CamelModel):
     course_id: str
     enrolled: int
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
+class UserOut(CamelModel):
+    id: int
+    email: EmailStr
+    role: str
+    student_id: int | None

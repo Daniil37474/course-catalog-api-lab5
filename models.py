@@ -46,3 +46,21 @@ class Enrollment(Base):
     enrolled_at: Mapped[datetime] = mapped_column(server_default=func.now())
     course: Mapped[Course] = relationship(back_populates="enrollments")
     student: Mapped[Student] = relationship(back_populates="enrollments")
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("role IN ('student', 'admin')", name="role"),
+        CheckConstraint(
+            "(role = 'student' AND student_id IS NOT NULL) OR "
+            "(role = 'admin' AND student_id IS NULL)", name="profile",
+        ),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    email: Mapped[str] = mapped_column(unique=True)
+    password_hash: Mapped[str]
+    role: Mapped[str]
+    student_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("students.id", ondelete="CASCADE"), unique=True,
+    )
