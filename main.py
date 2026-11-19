@@ -1,20 +1,22 @@
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 import problem
 import services
 import counter
+from auth import (router as auth_router, CurrentUser, AdminUser, get_optional_user,
+                  require_student_access, can_access_student)
 
 from db import get_db
 from graphql_api import graphql_app
 from models import Course, Enrollment, Student
 from schemas import (CourseOut, CourseStats, EnrollmentDetail, EnrollmentIn,
-                     EnrollmentOut, StudentIn, StudentOut)
+                     EnrollmentOut, StudentIn, StudentOut, UserOut)
 
-app = FastAPI(title="Course Catalog API")
+app = FastAPI(title="Course Catalog API", dependencies=[Depends(get_optional_user)])
 problem.install(app)
 counter.install(app)
 app.add_middleware(
@@ -24,6 +26,12 @@ app.add_middleware(
 )
 SessionDep = Annotated[Session, Depends(get_db)]
 app.include_router(graphql_app, prefix="/graphql")
+app.include_router(auth_router)
+
+@app.get("/me", response_model=UserOut, tags=["auth"])
+def me(user: CurrentUser):
+    return user
+
 
 def pagination(
     page: Annotated[int, Query(ge=1)] = 1,
@@ -74,17 +82,19 @@ def like_course(course_id: str, db: SessionDep):
 
 
 @app.post("/students", response_model=StudentOut, status_code=201)
-def create_student(data: StudentIn, db: SessionDep):
+def create_student(data: StudentIn, db: SessionDep, _: AdminUser):
     return services.create_student(db, data.name, str(data.email))
 
 
 @app.post("/enrollments", response_model=EnrollmentOut, status_code=201)
-def create_enrollment(data: EnrollmentIn, db: SessionDep):
+def create_enrollment(data: EnrollmentIn, db: SessionDep, user: CurrentUser):
+    if not can_access_student(user, data.student_id):
+        raise HTTPException(403, "You can enroll only yourself")
     return services.enroll(db, data.course_id, data.student_id)
 
 
 @app.get("/enrollments", response_model=list[EnrollmentDetail])
-def list_enrollments(db: SessionDep):
+def list_enrollments(db: SessionDep, _: AdminUser):
     stmt = (select(Enrollment.id, Enrollment.course_id,
                    Course.title.label("course_title"), Enrollment.student_id,
                    Student.name.label("student_name"), Enrollment.enrolled_at)
@@ -93,7 +103,8 @@ def list_enrollments(db: SessionDep):
 
 
 @app.get("/students/{student_id}", response_model=StudentOut)
-def get_student(student_id: int, db: SessionDep):
+def get_student(student_id: int, db: SessionDep, user: CurrentUser):
+    require_student_access(user, student_id)
     student = db.get(Student, student_id)
     if student is None:
         raise services.ServiceError("STUDENT_NOT_FOUND", "Student not found")
@@ -101,7 +112,8 @@ def get_student(student_id: int, db: SessionDep):
 
 
 @app.get("/students/{student_id}/enrollments", response_model=list[EnrollmentDetail])
-def student_enrollments(student_id: int, db: SessionDep):
+def student_enrollments(student_id: int, db: SessionDep, user: CurrentUser):
+    require_student_access(user, student_id)
     stmt = (select(Enrollment.id, Enrollment.course_id,
                    Course.title.label("course_title"), Enrollment.student_id,
                    Student.name.label("student_name"), Enrollment.enrolled_at)
