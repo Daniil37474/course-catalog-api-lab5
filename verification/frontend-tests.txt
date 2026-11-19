@@ -1,0 +1,17 @@
+
+> course-catalog@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ search is case-insensitive and trims spaces (9.8971ms)
+✔ type and search combine; conflicting filters return no results (1.2859ms)
+✔ sorting does not mutate the source (51.2612ms)
+✔ repeated query keys use the first value; unknown options safely fall back (2.0498ms)
+✔ API helpers handle success, 404, HTTP errors and connection failure (134.607ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3129.2362

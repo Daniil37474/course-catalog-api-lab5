@@ -1,0 +1,47 @@
+{
+  "stats": {
+    "startTime": "2026-11-19T17:20:37.411Z",
+    "duration": 22800.801,
+    "expected": 7,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cases": [
+    {
+      "name": "anonymous and forged session are both redirected",
+      "status": "expected",
+      "duration_ms": 2343
+    },
+    {
+      "name": "wrong password keeps the entered email",
+      "status": "expected",
+      "duration_ms": 1981
+    },
+    {
+      "name": "student session is private, both course pages use the current student, logout clears it",
+      "status": "expected",
+      "duration_ms": 3035
+    },
+    {
+      "name": "admin sees all enrollments",
+      "status": "expected",
+      "duration_ms": 1518
+    },
+    {
+      "name": "an enrollment Server Action rejects a direct POST without a session",
+      "status": "expected",
+      "duration_ms": 1502
+    },
+    {
+      "name": "Swagger Authorize logs in and authorizes GET /me",
+      "status": "expected",
+      "duration_ms": 4846
+    },
+    {
+      "name": "student enrolls from the course page using the authenticated profile",
+      "status": "expected",
+      "duration_ms": 2931
+    }
+  ]
+}

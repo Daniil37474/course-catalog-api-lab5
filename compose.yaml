@@ -1,0 +1,18 @@
+services:
+  database:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: course_catalog_lab9
+      POSTGRES_USER: catalog_app
+      POSTGRES_PASSWORD: catalog_demo_password
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - lab9_database:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog_app -d course_catalog_lab9"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+volumes:
+  lab9_database:

@@ -1,0 +1,314 @@
+{
+  "checked_at": "2026-11-19T17:15:43.037869+00:00",
+  "rest": [
+    {
+      "request": "GET /courses",
+      "studentId": null,
+      "anonymous": 200,
+      "student": 200,
+      "admin": 200
+    },
+    {
+      "request": "GET /me",
+      "studentId": null,
+      "anonymous": 401,
+      "student": 200,
+      "admin": 200
+    },
+    {
+      "request": "GET /enrollments",
+      "studentId": null,
+      "anonymous": 401,
+      "student": 403,
+      "admin": 200
+    },
+    {
+      "request": "POST /enrollments",
+      "studentId": 1,
+      "anonymous": 401,
+      "student": 201,
+      "admin": "N/A: administrator has no own student profile"
+    },
+    {
+      "request": "POST /enrollments",
+      "studentId": 2,
+      "anonymous": 401,
+      "student": 403,
+      "admin": 201
+    }
+  ],
+  "tokens": {
+    "expired": 401,
+    "foreign-key": 401,
+    "no-exp": 401,
+    "wrong-issuer": 401,
+    "alg-none": 401,
+    "invalid-sub": 401,
+    "forged": 401
+  },
+  "login": {
+    "same_error_body": true,
+    "samples_per_case": 12,
+    "unknown_email_median_ms": 207.25,
+    "known_email_wrong_password_median_ms": 217.4,
+    "rate_limiting": "not implemented; propose a shared limiter per account and IP, 429 with Retry-After"
+  },
+  "graphql": [
+    {
+      "case": "anonymous me",
+      "http": 200,
+      "response": {
+        "data": null,
+        "errors": [
+          {
+            "message": "Authentication required",
+            "locations": [
+              {
+                "line": 1,
+                "column": 3
+              }
+            ],
+            "path": [
+              "me"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case": "student me",
+      "http": 200,
+      "response": {
+        "data": {
+          "me": {
+            "email": "aigerim@example.com",
+            "role": "student"
+          }
+        }
+      }
+    },
+    {
+      "case": "student lists students",
+      "http": 200,
+      "response": {
+        "data": null,
+        "errors": [
+          {
+            "message": "Admin role required",
+            "locations": [
+              {
+                "line": 1,
+                "column": 3
+              }
+            ],
+            "path": [
+              "students"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case": "admin lists students",
+      "http": 200,
+      "response": {
+        "data": {
+          "students": [
+            {
+              "name": "Aigerim Sadykova",
+              "email": "aigerim@example.com"
+            },
+            {
+              "name": "Daniyar Bekov",
+              "email": "daniyar@example.com"
+            },
+            {
+              "name": "Asel Omarova",
+              "email": "asel@example.com"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "other student's email",
+      "http": 200,
+      "response": {
+        "data": {
+          "student": {
+            "name": "Daniyar Bekov",
+            "email": null
+          }
+        },
+        "errors": [
+          {
+            "message": "Not allowed to read this field",
+            "locations": [
+              {
+                "line": 1,
+                "column": 27
+              }
+            ],
+            "path": [
+              "student",
+              "email"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case": "nested email",
+      "http": 200,
+      "response": {
+        "data": {
+          "enrollments": [
+            {
+              "student": {
+                "id": "1",
+                "name": "Aigerim Sadykova",
+                "email": "aigerim@example.com"
+              }
+            },
+            {
+              "student": {
+                "id": "1",
+                "name": "Aigerim Sadykova",
+                "email": "aigerim@example.com"
+              }
+            },
+            {
+              "student": {
+                "id": "2",
+                "name": "Daniyar Bekov",
+                "email": null
+              }
+            },
+            {
+              "student": {
+                "id": "2",
+                "name": "Daniyar Bekov",
+                "email": null
+              }
+            },
+            {
+              "student": {
+                "id": "2",
+                "name": "Daniyar Bekov",
+                "email": null
+              }
+            },
+            {
+              "student": {
+                "id": "3",
+                "name": "Asel Omarova",
+                "email": null
+              }
+            },
+            {
+              "student": {
+                "id": "1",
+                "name": "Aigerim Sadykova",
+                "email": "aigerim@example.com"
+              }
+            },
+            {
+              "student": {
+                "id": "2",
+                "name": "Daniyar Bekov",
+                "email": null
+              }
+            }
+          ]
+        },
+        "errors": [
+          {
+            "message": "Not allowed to read this field",
+            "locations": [
+              {
+                "line": 1,
+                "column": 35
+              }
+            ],
+            "path": [
+              "enrollments",
+              2,
+              "student",
+              "email"
+            ]
+          },
+          {
+            "message": "Not allowed to read this field",
+            "locations": [
+              {
+                "line": 1,
+                "column": 35
+              }
+            ],
+            "path": [
+              "enrollments",
+              3,
+              "student",
+              "email"
+            ]
+          },
+          {
+            "message": "Not allowed to read this field",
+            "locations": [
+              {
+                "line": 1,
+                "column": 35
+              }
+            ],
+            "path": [
+              "enrollments",
+              4,
+              "student",
+              "email"
+            ]
+          },
+          {
+            "message": "Not allowed to read this field",
+            "locations": [
+              {
+                "line": 1,
+                "column": 35
+              }
+            ],
+            "path": [
+              "enrollments",
+              7,
+              "student",
+              "email"
+            ]
+          },
+          {
+            "message": "Not allowed to read this field",
+            "locations": [
+              {
+                "line": 1,
+                "column": 35
+              }
+            ],
+            "path": [
+              "enrollments",
+              5,
+              "student",
+              "email"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "curl": {
+    "login": 200,
+    "me": 200,
+    "profile": {
+      "id": 2,
+      "email": "aigerim@example.com",
+      "role": "student",
+      "studentId": 1
+    }
+  }
+}

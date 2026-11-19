@@ -1,0 +1,18 @@
+{
+  "backend_tests": {
+    "passed": 65,
+    "failed": 0
+  },
+  "frontend_unit_tests": {
+    "passed": 5,
+    "failed": 0
+  },
+  "browser_tests": {
+    "passed": 7,
+    "failed": 0
+  },
+  "production_build": true,
+  "lint": 0,
+  "typecheck": 0,
+  "alembic_check": 0
+}
